@@ -1,21 +1,41 @@
 1. Получить информацию о всех гномах, которые входят в какой-либо отряд, вместе с информацией об их отрядах.
+Рефлексия:
+В эталоне используются конкретные название вместо * это более читаемо
+
 SELECT * FROM Dwarves
 JOIN Squads
 WHERE Dwarves.squad_id = Squads.squad_id
 
+
+
 2. Найти всех гномов с профессией "miner", которые не состоят ни в одном отряде.
+Рефлексия:
+Вот тут не понимаю, зачем в эталоне выводить age
+
 SELECT name
 FROM Dwarves
 WHERE profession = 'miner'
 AND squad_id IS NULL
 (тут намеренно только name, потомк как не сказано в задании, что именно вывести)
 
+
+
 3. Получить все задачи с наивысшим приоритетом, которые находятся в статусе "pending".
+Рефлексия:
+Вижу, что у меня в корне неправильно. Сначала ищу максимальный приоритет, затем pending, но их может не оказаться среди
+макисмума во всей таблице. В эталоне ищется максимум среди panding.
+
 SELECT * FROM Tasks
 WHERE priority = (SELECT MAX(priority) FROM Tasks)
 AND status = 'pending'
 
+
+
+
 4. Для каждого гнома, который владеет хотя бы одним предметом, получить количество предметов, которыми он владеет.
+Рефлексия:
+Вот тут тоже не совсем понимаю, зачем так много полей выводить, хотя это не указано в самом задании
+
 SELECT
 Dwarves.name
 COUNT (Items.id) AS items_count
@@ -23,7 +43,11 @@ FROM Dwarves
 JOIN Items ON Dwarves.dwarf_id = Items.owner_id
 GROUP BY Dwarves.name;
 
+
 5. Получить список всех отрядов и количество гномов в каждом отряде. Также включите в выдачу отряды без гномов.
+Рефлексия:
+Женя, практикуй алиасы=)
+
 SELECT Squads.squad_id,
 СOUNT(Dwarves.dwarf_id) AS dwarf_count
 FROM Squads
@@ -31,11 +55,18 @@ LEFT JOIN Dwarves
 ON Squads.squad_id = Dwarves.squad_id
 GROUP BY Squads.squad_id;
 
+
+
 6. Получить список профессий с наибольшим количеством незавершённых задач ("pending" и "in_progress") у гномов этих профессий.
+Рефлексия:
+Тут я судя по всуем перепутал поля Tasks.dwarf_id и Tasks.assigned_to + решил более строгую задачу, чем следовало, но
+и более ресурсозатратную
+
 SELECT Dwarves.profession,
 COUNT(Tasks.task_id) AS unfinished_tasks
 FROM Dwarves
-JOIN Tasks ON Dwarves.dwarf_id = Tasks.dwarf_id
+JOIN Tasks
+ON Dwarves.dwarf_id = Tasks.dwarf_id
 WHERE Tasks.status IN ('pending', 'in_progress')
 GROUP BY Dwarves.profession
 HAVING COUNT(Tasks.task_id) = (
@@ -50,6 +81,9 @@ HAVING COUNT(Tasks.task_id) = (
 );
 
 7. Для каждого типа предметов узнать средний возраст гномов, владеющих этими предметами.
+Рефлексия:
+Женя, все таки практикуй алиасы=)
+
 SELECT Items.type,
 AVG(Dwarves.age) AS avg_age
 FROM Items
@@ -57,7 +91,13 @@ JOIN Dwarves
 ON Items.owner_id = Dwarves.dwarf_id
 GROUP BY Items.type;
 
+
+
 8. Найти всех гномов старше среднего возраста (по всем гномам в базе), которые не владеют никакими предметами.
+Рефлексия:
+Тут необязательно выбирать лишние поля через *.
+Эталонное решение через подзапрос выглядит менее ресурсозатратным
+
 SELECT Dwarves.*
 FROM Dwarves
 LEFT JOIN Items
@@ -67,3 +107,4 @@ WHERE Dwarves.age > (
     FROM Dwarves
 )
 AND Items.owner_id IS NULL;
+

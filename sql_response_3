@@ -1,0 +1,96 @@
+Задача 2: Получение данных о гноме с навыками и назначениями
+Создайте запрос, который возвращает информацию о гноме, включая идентификаторы всех его навыков, текущих назначений, принадлежности к отрядам и используемого снаряжения.
+SELECT
+D.dwarf_id,
+D.name,
+D.age,
+D.profession,
+D.fortress_id,
+JSON_OBJECT(
+        'skills_ids', (
+            SELECT JSON_ARRAYAGG(S.skill_id)
+            FROM DWARF_SKILLS S
+            WHERE D.dwarf_id = S.dwarf_id
+        ),
+        'assignments_ids', (
+            SELECT JSON_ARRAYAGG(A.assignment_id)
+            FROM DWARF_ASSIGNMENTS A
+            WHERE D.dwarf_id = A.dwarf_id
+        ),
+        'squads_ids', (
+            SELECT JSON_ARRAYAGG(S.squad_id)
+            FROM MILITARY_SQUADS S
+            WHERE D.fortress_id = S.fortress_id
+        ),
+        'equipments_ids', (
+            SELECT JSON_ARRAYAGG(E.equipment_id)
+            FROM DWARF_EQUIPMENT E
+            WHERE D.dwarf_id = E.dwarf_id
+        )
+) AS related_entities
+FROM DWARVES D;
+
+Задача 3: Данные о мастерской с назначенными рабочими и проектами
+Напишите запрос для получения информации о мастерской, включая идентификаторы назначенных ремесленников, текущих проектов, используемых и производимых ресурсов.
+
+SELECT
+W.workshop_id,
+W.name,
+W.type,
+W.quality,
+W.fortress_id,
+JSON_OBJECT(
+        'craftdvarwes_ids', (
+            SELECT JSON_ARRAYAGG(CD.dwarf_id)
+            FROM WORKSHOP_CRAFTSDWARVES CD
+            WHERE W.workshop_id = CD.workshop_id
+        ),
+        'projects_ids', (
+            SELECT JSON_ARRAYAGG(P.project_id)
+            FROM PROJECTS P
+            WHERE W.workshop_id = P.workshop_id
+        ),
+        'materials_ids', (
+            SELECT JSON_ARRAYAGG(M.material_id)
+            FROM WORKSHOP_MATERIALS M
+            WHERE W.workshop_id = M.workshop_id
+        ),
+        'products_ids', (
+            SELECT JSON_ARRAYAGG(P.product_id)
+            FROM WORKSHOP_PRODUCTS P
+            WHERE W.workshop_id = P.workshop_id
+        )
+) AS related_entities
+FROM WORKSHOPS W;
+
+Задача 4: Данные о военном отряде с составом и операциями
+Разработайте запрос, который возвращает информацию о военном отряде, включая идентификаторы всех членов отряда, используемого снаряжения, прошлых и текущих операций, тренировок.
+SELECT
+S.squad_id
+S.name
+S.formation_type
+S.leader_id
+S.fortress_id,
+JSON_OBJECT(
+        'members_ids', (
+            SELECT JSON_ARRAYAGG(SM.dwarf_id)
+            FROM SQUAD_MEMBERS SM
+            WHERE SM.squad_id = MS.squad.id
+        ),
+        'equipments_id', (
+            SELECT JSON_ARRAYAGG(SE.equipment_id)
+            FROM SQUAD_EQUIPMENT SE
+            WHERE SE.squad_id = S.squad.id
+        ),
+        'operations_ids', (
+            SELECT JSON_ARRAYAGG(SO.operation_id)
+            FROM SQUAD_OPERATIONS SO
+            WHERE SO.squad_id = S.squad.id
+        ),
+        'schedules_ids', (
+            SELECT JSON_ARRAYAGG(ST.schedule_id)
+            FROM SQUAD_TRAINING ST
+            WHERE ST.squad_id = S.squad.id
+        ),
+) AS related_entities
+FROM MILITARY_SQUADS S

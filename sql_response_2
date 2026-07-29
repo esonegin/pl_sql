@@ -1,13 +1,24 @@
 1. Найдите все отряды, у которых нет лидера.
+Рефлеския:
+Тут алиасы излишни. Сначала думал что понадобится JOIN, но оказалось все проще.
+
 SELECT S.name FROM Squads S
 WHERE leader_id IS NULL
 
 2. Получите список всех гномов старше 150 лет, у которых профессия "Warrior".
+Рефлексия:
+Тут алиасы излишни, но как будто это в некоторых местах дело вкуса.
+
 SELECT D.name, D.age, D.profession
 FROM Dwarves D
 WHERE D.age > 150 AND D.profession = 'Warrior'
 
+
+
 3. Найдите гномов, у которых есть хотя бы один предмет типа "weapon".
+Рефлексия:
+Сначала написал без DISTINCT, потом понял, что так будут повторяться одни и теже гномы.
+
 SELECT DISTINCT D.name, D.dwarf_id
 FROM Dwarves D
 JOIN Items I
@@ -15,13 +26,21 @@ ON D.dwarf_id = I.owner_id
 AND I.type = 'weapon'
 
 4. Получите количество задач для каждого гнома, сгруппировав их по статусу.
+Рефлексия:
+Сделал через JOIN чтобы вывести больше информации по гномам.
+
 SELECT D.name, T.status, COUNT(T.task_id)
 FROM Tasks T
 JOIN Dwarves D
 ON T.assigned_to = D.dwarf_id
 GROUP BY D.dwarf_id, T.status
 
+
 5. Найдите все задачи, которые были назначены гномам из отряда с именем "Guardians".
+Рефлексия:
+Не сразу осознал, что нужно двойной JOIN применить. Примерно на это шаге софрмуилировал для себя необходимость выработки
+некоего универсального, ментального алгоритма/опросника для подобных задач: что ищем? все ли сущности в одной таблице? и т.д.
+
 SELECT T.name
 FROM Tasks T
 JOIN Dwarves D
@@ -31,9 +50,13 @@ ON D.suqad_id = S.squad_id
 WHERE S.name = 'Guardians'
 
 6. Выведите всех гномов и их ближайших родственников, указав тип родственных отношений.
+Рефлеския:
+Решения похожи, но заход через разные таблицы.
+
 SELECT D.name, D2.name, R.relationship
 FROM Dwarves D
 JOIN Relationships R
 ON D.dwarf_id = R.dwarf_id
 JOIN Dwarves D2
 ON R.related_to = D2.dwarf_id
+

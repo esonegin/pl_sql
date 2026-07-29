@@ -92,5 +92,10 @@ JSON_OBJECT(
             FROM SQUAD_TRAINING ST
             WHERE ST.squad_id = S.squad.id
         ),
+        'battle_report_ids', (
+            SELECT JSON_ARRAYAGG(SB.report_id)
+            FROM SQUAD_BATTLES SB
+            WHERE SB.squad_id = S.squad.id
+        ),
 ) AS related_entities
 FROM MILITARY_SQUADS S

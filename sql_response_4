@@ -1,0 +1,169 @@
+Задача 1*: Анализ эффективности экспедиций
+
+Напишите запрос, который определит наиболее и наименее успешные экспедиции, учитывая:
+- Соотношение выживших участников к общему числу
+- Ценность найденных артефактов
+- Количество обнаруженных новых мест
+- Успешность встреч с существами (отношение благоприятных исходов к неблагоприятным)
+- Опыт, полученный участниками (сравнение навыков до и после)
+
+WITH
+member_stats AS (
+    SELECT
+        expedition_id,
+        COUNT(*) AS total_members,
+        SUM(CASE WHEN survived = 1 THEN 1 ELSE 0 END) AS survived_members
+    FROM expedition_members
+    GROUP BY expedition_id
+),
+
+artifact_stats AS (
+    SELECT
+        expedition_id,
+        SUM(value) AS artifacts_value
+    FROM expedition_artifacts
+    GROUP BY expedition_id
+),
+
+site_stats AS (
+    SELECT
+        expedition_id,
+        COUNT(*) AS discovered_sites
+    FROM expedition_sites
+    GROUP BY expedition_id
+),
+
+encounter_stats AS (
+    SELECT
+        expedition_id,
+        SUM(CASE
+                WHEN outcome IN ('Success','Won','Friendly','Escaped')
+                THEN 1 ELSE 0
+            END) AS success_count,
+        SUM(CASE
+                WHEN outcome NOT IN ('Success','Won','Friendly','Escaped')
+                THEN 1 ELSE 0
+            END) AS fail_count
+    FROM expedition_creatures
+    GROUP BY expedition_id
+),
+
+skill_growth AS (
+    SELECT
+        em.expedition_id,
+        AVG(after_skill.level - before_skill.level) AS skill_improvement
+    FROM expedition_members em
+    JOIN expeditions e
+      ON e.expedition_id = em.expedition_id
+
+    JOIN dwarf_skills before_skill
+      ON before_skill.dwarf_id = em.dwarf_id
+     AND before_skill.date = (
+            SELECT MAX(ds.date)
+            FROM dwarf_skills ds
+            WHERE ds.dwarf_id = em.dwarf_id
+              AND ds.date <= e.departure_date
+        )
+
+    JOIN dwarf_skills after_skill
+      ON after_skill.dwarf_id = em.dwarf_id
+     AND after_skill.skill_id = before_skill.skill_id
+     AND after_skill.date = (
+            SELECT MIN(ds.date)
+            FROM dwarf_skills ds
+            WHERE ds.dwarf_id = em.dwarf_id
+              AND ds.skill_id = before_skill.skill_id
+              AND ds.date >= e.return_date
+        )
+
+    GROUP BY em.expedition_id
+),
+
+expedition_stats AS (
+    SELECT
+        e.expedition_id,
+        e.destination,
+        e.status,
+
+        ROUND(ms.survived_members * 100.0 /
+              NULLIF(ms.total_members,0),2) AS survival_rate,
+
+        COALESCE(a.artifacts_value,0) AS artifacts_value,
+
+        COALESCE(s.discovered_sites,0) AS discovered_sites,
+
+        ROUND(
+            es.success_count * 100.0 /
+            NULLIF(es.success_count + es.fail_count,0),2
+        ) AS encounter_success_rate,
+
+        ROUND(COALESCE(g.skill_improvement,0),2) AS skill_improvement,
+
+        DATEDIFF(e.return_date,e.departure_date) AS expedition_duration,
+
+        ROUND(
+            (
+                (ms.survived_members / NULLIF(ms.total_members,0))
+                + LEAST(COALESCE(a.artifacts_value,0)/50000,1)
+                + LEAST(COALESCE(s.discovered_sites,0)/5,1)
+                + COALESCE(
+                    es.success_count /
+                    NULLIF(es.success_count+es.fail_count,0),0)
+                + LEAST(COALESCE(g.skill_improvement,0)/20,1)
+            ) / 5
+        ,2) AS overall_success_score
+
+    FROM expeditions e
+    LEFT JOIN member_stats ms ON ms.expedition_id=e.expedition_id
+    LEFT JOIN artifact_stats a ON a.expedition_id=e.expedition_id
+    LEFT JOIN site_stats s ON s.expedition_id=e.expedition_id
+    LEFT JOIN encounter_stats es ON es.expedition_id=e.expedition_id
+    LEFT JOIN skill_growth g ON g.expedition_id=e.expedition_id
+    WHERE e.status='Completed'
+),
+
+ranked AS (
+    SELECT *,
+           DENSE_RANK() OVER(ORDER BY overall_success_score DESC) AS best_rank,
+           DENSE_RANK() OVER(ORDER BY overall_success_score ASC)  AS worst_rank
+    FROM expedition_stats
+)
+
+SELECT JSON_ARRAYAGG(
+    JSON_OBJECT(
+        'expedition_id', r.expedition_id,
+        'destination', r.destination,
+        'status', r.status,
+        'survival_rate', r.survival_rate,
+        'artifacts_value', r.artifacts_value,
+        'discovered_sites', r.discovered_sites,
+        'encounter_success_rate', r.encounter_success_rate,
+        'skill_improvement', r.skill_improvement,
+        'expedition_duration', r.expedition_duration,
+        'overall_success_score', r.overall_success_score,
+        'related_entities',
+        JSON_OBJECT(
+            'member_ids',
+            (
+                SELECT JSON_ARRAYAGG(dwarf_id ORDER BY dwarf_id)
+                FROM expedition_members em
+                WHERE em.expedition_id=r.expedition_id
+            ),
+            'artifact_ids',
+            (
+                SELECT JSON_ARRAYAGG(artifact_id ORDER BY artifact_id)
+                FROM expedition_artifacts ea
+                WHERE ea.expedition_id=r.expedition_id
+            ),
+            'site_ids',
+            (
+                SELECT JSON_ARRAYAGG(site_id ORDER BY site_id)
+                FROM expedition_sites es
+                WHERE es.expedition_id=r.expedition_id
+            )
+        )
+    )
+) AS expedition_analysis
+FROM ranked r
+WHERE r.best_rank=1
+   OR r.worst_rank=1;

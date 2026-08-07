@@ -1,0 +1,148 @@
+WITH craftsdwarves_stats AS (
+    SELECT
+        workshop_id,
+        COUNT(dwarf_id) AS num_craftsdwarves
+    FROM WORKSHOP_CRAFTSDWARVES
+    GROUP BY workshop_id
+),
+
+production_stats AS (
+    SELECT
+        WP.workshop_id,
+        SUM(WP.quantity) AS total_quantity_produced,
+        SUM(WP.quantity * P.value) AS total_production_value,
+        ROUND(
+            SUM(WP.quantity) /
+            NULLIF(COUNT(DISTINCT WP.production_date), 0),
+            2
+        ) AS daily_production_rate,
+        ROUND(
+            COUNT(DISTINCT WP.production_date) * 100.0 /
+            NULLIF(
+                DATEDIFF(
+                    MAX(WP.production_date),
+                    MIN(WP.production_date)
+                ) + 1,
+                0
+            ),
+            2
+        ) AS workshop_utilization_percent
+    FROM WORKSHOP_PRODUCTS WP
+    JOIN PRODUCTS P
+        ON WP.product_id = P.product_id
+    GROUP BY WP.workshop_id
+),
+
+material_stats AS (
+    SELECT
+        workshop_id,
+        SUM(quantity) AS total_material_quantity
+    FROM WORKSHOP_MATERIALS WM
+    GROUP BY WM.workshop_id
+),
+
+skill_stats AS (
+    SELECT
+        WC.workshop_id,
+        ROUND(
+            AVG(D.skill_level),
+            2
+        ) AS average_craftsdwarf_skill,
+        ROUND(
+            AVG(D.skill_level * P.value),
+            2
+        ) AS skill_quality_correlation
+    FROM WORKSHOP_CRAFTSDWARVES WC
+    JOIN DWARVES D
+        ON WC.dwarf_id = D.dwarf_id
+    JOIN WORKSHOP_PRODUCTS WP
+        ON WC.workshop_id = WP.workshop_id
+    JOIN PRODUCTS P
+        ON WP.product_id = P.product_id
+    GROUP BY WC.workshop_id
+)
+
+SELECT
+    JSON_ARRAYAGG(
+        JSON_OBJECT(
+            'workshop_id', W.workshop_id,
+            'workshop_name', W.name,
+            'workshop_type', W.type,
+
+            'num_craftsdwarves',
+            COALESCE(CS.num_craftsdwarves, 0),
+
+            'total_quantity_produced',
+            COALESCE(PS.total_quantity_produced, 0),
+
+            'total_production_value',
+            COALESCE(PS.total_production_value, 0),
+
+            'value_per_material_unit',
+            ROUND(
+                COALESCE(PS.total_production_value, 0) /
+                NULLIF(MS.total_material_quantity, 0),
+                2
+            ),
+
+            'workshop_utilization_percent',
+            COALESCE(PS.workshop_utilization_percent, 0),
+
+            'material_conversion_ratio',
+            ROUND(
+                COALESCE(PS.total_quantity_produced, 0) /
+                NULLIF(MS.total_material_quantity, 0),
+                2
+            ),
+
+            'average_craftsdwarf_skill',
+            COALESCE(SS.average_craftsdwarf_skill, 0),
+
+            'skill_quality_correlation',
+            COALESCE(SS.skill_quality_correlation, 0),
+
+            'related_entities',
+            JSON_OBJECT(
+                'craftsdwarf_ids',
+                (
+                    SELECT JSON_ARRAYAGG(WC.dwarf_id)
+                    FROM WORKSHOP_CRAFTSDWARVES WC
+                    WHERE WC.workshop_id = W.workshop_id
+                ),
+
+                'product_ids',
+                (
+                    SELECT JSON_ARRAYAGG(WP.product_id)
+                    FROM WORKSHOP_PRODUCTS WP
+                    WHERE WP.workshop_id = W.workshop_id
+                ),
+
+                'material_ids',
+                (
+                    SELECT JSON_ARRAYAGG(WM.material_id)
+                    FROM WORKSHOP_MATERIALS WM
+                    WHERE WM.workshop_id = W.workshop_id
+                ),
+
+                'project_ids',
+                (
+                    SELECT JSON_ARRAYAGG(P.project_id)
+                    FROM PROJECTS P
+                    WHERE P.workshop_id = W.workshop_id
+                )
+            )
+        )
+    )
+FROM WORKSHOPS W
+
+LEFT JOIN craftsdwarves_stats CS
+    ON W.workshop_id = CS.workshop_id
+
+LEFT JOIN production_stats PS
+    ON W.workshop_id = PS.workshop_id
+
+LEFT JOIN material_stats MS
+    ON W.workshop_id = MS.workshop_id
+
+LEFT JOIN skill_stats SS
+    ON W.workshop_id = SS.workshop_id;

@@ -1,0 +1,128 @@
+Задача 3*: Комплексная оценка военной эффективности отрядов
+
+Создайте запрос, оценивающий эффективность военных отрядов на основе:
+- Результатов всех сражений (победы/поражения/потери)
+- Соотношения побед к общему числу сражений
+- Навыков членов отряда и их прогресса
+- Качества экипировки
+- Истории тренировок и их влияния на результаты
+- Выживаемости членов отряда в долгосрочной перспективе
+
+
+WITH
+battle_stats AS (
+    SELECT
+        squad_id,
+        COUNT(*) AS total_battles,
+        SUM(CASE WHEN outcome = 'victory' THEN 1 ELSE 0 END) AS victories,
+        ROUND(SUM(CASE WHEN outcome = 'victory' THEN 1 ELSE 0 END) * 100.0 / NULLIF(COUNT(*), 0),2) AS victory_percentage,
+        ROUND(SUM(enemy_casualties) / NULLIF(SUM(casualties),0), 2) AS casualty_exchange_ratio
+    FROM SQUAD_BATTLES SB
+    GROUP BY SB.squad_id
+),
+member_stats AS (
+    SELECT
+        squad_id,
+        ROUND (SUM(CASE WHEN exit_reason='Killed' THEN 1 ELSE 0 END) * 100.0 / NULLIF(COUNT(dwarf_id),0),2)  AS casualty_rate,
+        ROUND(COUNT(CASE WHEN exit_date IS NULL THEN dwarf_id END) * 100.0 / NULLIF(COUNT(dwarf_id),0), 2 ) AS retention_rate,
+        COUNT(CASE WHEN exit_date IS NULL THEN dwarf_id END) AS current_members,
+        COUNT(dwarf_id) AS total_members_ever
+    FROM SQUAD_MEMBERS SM
+    GROUP BY SM.squad_id
+),
+equipment_stats AS (
+     SELECT
+         squad_id,
+         ROUND(AVG(EQ.quality), 2) AS avg_equipment_quality
+     FROM SQUAD_EQUIPMENT SEQ
+     JOIN EQUIPMENT EQ
+     ON SEQ.equipment_id = EQ.equipment_id
+     GROUP BY SEQ.squad_id
+),
+ training_stats AS (
+     SELECT
+         squad_id,
+         COUNT(ST.schedule_id) AS total_training_sessions,
+         ROUND(AVG(ST.effectiveness), 2) AS avg_training_effectiveness,
+         ROUND(CORR(ST.effectiveness, CASE WHEN SB.outcome = 'victory' THEN 1 ELSE 0 END),2) AS training_battle_correlation
+     FROM SQUAD_TRAINING ST
+     JOIN SQUAD_BATTLES SB
+     ON ST.squad_id = SB.squad_id
+     GROUP BY ST.squad_id
+),
+skill_progress AS (
+    SELECT
+          DS.dwarf_id,
+          DS.skill_id,
+          DS.level - LAG(DS.level) OVER (PARTITION BY DS.dwarf_id, DS.skill_id
+          ORDER BY DS.date) AS skill_improvement
+    FROM DWARF_SKILLS DS
+    JOIN SKILLS S
+    ON DS.skill_id = S.skill_id
+    WHERE S.category = 'Combat'
+),
+skill_stats AS (
+     SELECT
+           SM.squad_id,
+           ROUND(AVG(SP.skill_improvement), 2) AS avg_combat_skill_improvement
+     FROM SQUAD_MEMBERS SM
+     JOIN skill_progress SP
+     ON SM.dwarf_id = SP.dwarf_id
+     GROUP BY SM.squad_id
+)
+SELECT JSON_ARRAYAGG(
+JSON_OBJECT(
+'squad_id', MS.squad_id,
+'squad_name', MS.name,
+'formation_type', MS.formation_type,
+'leader_name', D.name,
+'total_battles', BS.total_battles,
+'victories', BS.victories,
+'victory_percentage', BS.victory_percentage,
+'casualty_rate', MST.casualty_rate,
+'casualty_exchange_ratio', BS.casualty_exchange_ratio,
+'current_members', MST.current_members,
+'total_members_ever', MST.total_members_ever,
+'retention_rate', MST.retention_rate,
+'avg_equipment_quality', EST.avg_equipment_quality,
+'total_training_sessions', TS.total_training_sessions,
+'avg_training_effectiveness', TS.avg_training_effectiveness,
+'training_battle_correlation', TS.training_battle_correlation,
+'avg_combat_skill_improvement', SS.avg_combat_skill_improvement,
+'related_entities',
+JSON_OBJECT(
+        'member_ids', (
+            SELECT JSON_ARRAYAGG(SM.dwarf_id)
+            FROM SQUAD_MEMBERS SM
+            WHERE SM.squad_id = MS.squad_id
+        ),
+        'equipment_ids', (
+            SELECT JSON_ARRAYAGG(SE.equipment_id)
+            FROM SQUAD_EQUIPMENT SE
+            WHERE SE.squad_id = MS.squad_id
+        ),
+        'battle_report_ids', (
+            SELECT JSON_ARRAYAGG(SB.report_id)
+            FROM SQUAD_BATTLES SB
+            WHERE SB.squad_id = MS.squad_id
+        ),
+        'training_ids', (
+            SELECT JSON_ARRAYAGG(ST.schedule_id)
+            FROM SQUAD_TRAINING ST
+            WHERE ST.squad_id = MS.squad_id
+        ),
+)))
+FROM MILITARY_SQUADS MS
+LEFT JOIN DWARVES D
+ON D.dwarf_id = MS.leader_id
+LEFT JOIN battle_stats BS
+ON BS.squad_id = MS.squad_id
+LEFT JOIN member_stats MST
+ON MST.squad_id = MS.squad_id
+LEFT JOIN equipment_stats EST
+ON EST.squad_id = MS.squad_id
+LEFT JOIN training_stats TS
+ON TS.squad_id = MS.squad_id
+LEFT JOIN skill_stats SS
+ON SS.squad_id = MS.squad_id
+

@@ -1,0 +1,95 @@
+Задача 2*: Комплексный анализ эффективности производства
+
+Разработайте запрос, который анализирует эффективность каждой мастерской, учитывая:
+- Производительность каждого ремесленника (соотношение созданных продуктов к затраченному времени)
+- Эффективность использования ресурсов (соотношение потребляемых ресурсов к производимым товарам)
+- Качество производимых товаров (средневзвешенное по ценности)
+- Время простоя мастерской
+- Влияние навыков ремесленников на качество товаров
+
+
+WITH craftsdwarves_stats AS (
+    SELECT
+        workshop_id,
+        COUNT(dwarf_id) AS num_craftsdwarves
+    FROM WORKSHOP_CRAFTSDWARVES
+    GROUP BY workshop_id
+), production_stats AS (
+    SELECT
+        WP.workshop_id,
+        SUM(WP.quantity) AS total_quantity_produced,
+        SUM(WP.quantity * P.value) AS total_production_value,
+        ROUND(SUM(WP.quantity)/NULLIF(COUNT(DISTINCT WP.production_date),0),2) AS daily_production_rate
+    FROM WORKSHOP_PRODUCTS WP
+    JOIN PRODUCTS P
+    ON WP.product_id = P.product_id
+    GROUP BY WP.workshop_id
+), material_stats AS (
+     SELECT
+        workshop_id,
+        SUM(quantity)
+        AS total_material_quantity
+     FROM WORKSHOP_MATERIALS WM
+     GROUP BY WM.workshop_id
+ ), idle_stats AS (
+      SELECT
+         workshop_id,
+         DATEDIFF(WP.production_date,
+         LAG(production_date)
+         OVER(PARTITION BY workshop_id
+         ORDER BY production_date))
+         AS total_idles
+      FROM WORKSHOP_PRODUCTS WP
+      GROUP BY WP.workshop_id
+  )
+
+SELECT JSON_ARRAYAGG(
+JSON_OBJECT(
+'workshop_id', W.workshop_id,
+'workshop_name', W.name,
+'workshop_type', W.type,
+'num_craftsdwarves', COALESCE(CS.num_craftsdwarves,0),
+'total_quantity_produced', COALESCE(PS.total_quantity_produced,0),
+'total_production_value', COALESCE(PS.total_production_value,0),
+'value_per_material_unit',ROUND(COALESCE(PS.total_production_value,0)/NULLIF(MS.total_material_quantity,0),2),
+'related_entities',
+JSON_OBJECT(
+        'craftsdwarf_ids', (
+            SELECT JSON_ARRAYAGG(WC.dwarf_id)
+            FROM WORKSHOP_CRAFTSDWARVES WC
+            WHERE WC.workshop_id = W.workshop_id
+        ),
+        'product_ids', (
+            SELECT JSON_ARRAYAGG(WP.product_id)
+            FROM WORKSHOP_PRODUCTS WP
+            WHERE WP.workshop_id = W.workshop_id
+        ),
+        'material_ids', (
+            SELECT JSON_ARRAYAGG(WM.material_id)
+            FROM WORKSHOP_MATERIALS WM
+            WHERE WM.workshop_id = W.workshop_id
+        ),
+        'project_ids', (
+            SELECT JSON_ARRAYAGG(P.project_id)
+            FROM PROJECTS P
+            WHERE P.workshop_id = W.workshop_id
+        )
+)
+)
+)
+FROM WORKSHOPS W
+LEFT JOIN craftsdwarves_stats CS
+ON W.workshop_id = CS.workshop_id
+LEFT JOIN production_stats PS
+ON W.workshop_id = PS.workshop_id
+LEFT JOIN material_stats MS
+ON W.workshop_id = MS.workshop_id
+
+
+
+
+
+
+
+
+

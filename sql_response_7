@@ -1,0 +1,209 @@
+Задача 4*: Комплексный анализ торговых отношений и их влияния на крепость
+
+Разработайте запрос, анализирующий торговые отношения со всеми цивилизациями, оценивая:
+- Баланс торговли с каждой цивилизацией за все время
+- Влияние товаров каждого типа на экономику крепости
+- Корреляцию между торговлей и дипломатическими отношениями
+- Эволюцию торговых отношений во времени
+- Зависимость крепости от определенных импортируемых товаров
+- Эффективность экспорта продукции мастерских
+
+
+WITH civilization_trade_stats
+AS (
+	SELECT c.civilization_type
+		,Count(DISTINCT c.caravan_id) AS total_caravans
+		,Sum(t.value) AS total_trade_value
+		,Sum(CASE
+				WHEN t.balance_direction = 'Export'
+					THEN t.value
+				WHEN t.balance_direction = 'Import'
+					THEN - t.value
+				ELSE 0
+				END) AS trade_balance
+	FROM caravans C
+	INNER JOIN trade_transactions T ON c.caravan_id = t.caravan_id
+	GROUP BY c.civilization_type
+	)
+	,trade_daily
+AS (
+	SELECT c.civilization_type
+		,t.DATE
+		,Sum(t.value) AS daily_trade_value
+	FROM caravans C
+	INNER JOIN trade_transactions T ON c.caravan_id = t.caravan_id
+	GROUP BY c.civilization_type
+		,t.DATE
+	)
+	,diplomatic_daily
+AS (
+	SELECT civilization_type
+		,DATE
+		,Sum(relationship_change) AS daily_relationship_change
+	FROM diplomatic_events
+	GROUP BY civilization_type
+		,DATE
+	)
+	,trade_diplomatic_daily
+AS (
+	SELECT t.civilization_type
+		,t.DATE
+		,t.daily_trade_value
+		,d.daily_relationship_change
+	FROM trade_daily T
+	INNER JOIN diplomatic_daily D ON t.civilization_type = d.civilization_type
+		AND t.DATE = d.DATE
+	)
+	,diplomatic_correlation_stats
+AS (
+	SELECT civilization_type
+		,Round(Corr(daily_trade_value, daily_relationship_change), 2) AS diplomatic_correlation
+	FROM trade_diplomatic_daily
+	GROUP BY civilization_type
+	)
+	,civilization_trade_analysis
+AS (
+	SELECT cts.*
+		,dcs.diplomatic_correlation
+		,CASE
+			WHEN cts.trade_balance > 0
+				THEN 'Favorable'
+			WHEN cts.trade_balance < 0
+				THEN 'Unfavorable'
+			ELSE 'Neutral'
+			END AS trade_relationship
+	FROM civilization_trade_stats CTS
+	LEFT JOIN diplomatic_correlation_stats DCS ON cts.civilization_type = dcs.civilization_type
+	)
+	,import_dependency_stats
+AS (
+	SELECT cg.material_type
+		,Sum(cg.quantity) AS total_imported
+		,Count(DISTINCT c.civilization_type) AS import_diversity
+		,Round(Sum(cg.quantity) / NULLIF(Count(DISTINCT c.civilization_type), 0), 2) AS dependency_score
+	FROM caravan_goods CG
+	INNER JOIN caravans C ON cg.caravan_id = c.caravan_id
+	WHERE cg.type = 'Import'
+	GROUP BY cg.material_type
+	)
+	,export_stats
+AS (
+	SELECT p.workshop_id
+		,p.type AS product_type
+		,Sum(cg.quantity) AS exported_quantity
+		,Sum(cg.value) AS export_value
+		,Avg(cg.value / NULLIF(cg.quantity * p.value, 0)) AS avg_markup
+	FROM caravan_goods CG
+	INNER JOIN products P ON cg.original_product_id = p.product_id
+	WHERE cg.type = 'Export'
+	GROUP BY p.workshop_id
+		,p.type
+	)
+	,production_stats
+AS (
+	SELECT p.workshop_id
+		,p.type AS product_type
+		,Sum(wp.quantity) AS produced_quantity
+	FROM workshop_products WP
+	INNER JOIN products P ON wp.product_id = p.product_id
+	GROUP BY p.workshop_id
+		,p.type
+	)
+	,export_effectiveness_stats
+AS (
+	SELECT e.workshop_id
+		,w.type AS workshop_type
+		,e.product_type
+		,Round(e.exported_quantity * 100.0 / NULLIF(p.produced_quantity, 0), 2) AS export_ratio
+		,Round(e.avg_markup, 2) AS avg_markup
+	FROM export_stats E
+	INNER JOIN production_stats P ON e.workshop_id = p.workshop_id
+		AND e.product_type = p.product_type
+	INNER JOIN workshops W ON e.workshop_id = w.workshop_id
+	)
+	,export_effectiveness_grouped
+AS (
+	SELECT workshop_type
+		,product_type
+		,Round(Avg(export_ratio), 2) AS export_ratio
+		,Round(Avg(avg_markup), 2) AS avg_markup
+	FROM export_effectiveness_stats
+	GROUP BY workshop_type
+		,product_type
+	)
+	,trade_quarterly
+AS (
+	SELECT Extract(year FROM t.DATE)::INT AS year
+		,extract(quarter FROM t.DATE)::INT AS quarter
+		,sum(t.value) AS quarterly_value
+		,sum(CASE
+				WHEN t.balance_direction = 'Export'
+					THEN t.value
+				WHEN t.balance_direction = 'Import'
+					THEN - t.value
+				ELSE 0
+				END) AS quarterly_balance
+	FROM trade_transactions t
+	GROUP BY extract(year FROM t.DATE)
+		,extract(quarter FROM t.DATE)
+	)
+	,trade_diversity_quarterly
+AS (
+	SELECT extract(year FROM t.DATE)::INT AS year
+		,extract(quarter FROM t.DATE)::INT AS quarter
+		,count(DISTINCT cg.material_type) AS trade_diversity
+	FROM trade_transactions t
+	INNER JOIN caravan_goods cg ON t.caravan_id = cg.caravan_id
+	GROUP BY extract(year FROM t.DATE)
+		,extract(quarter FROM t.DATE)
+	)
+	,trade_timeline_stats
+AS (
+	SELECT tq.year
+		,tq.quarter
+		,tq.quarterly_value
+		,tq.quarterly_balance
+		,COALESCE(tdq.trade_diversity, 0) AS trade_diversity
+	FROM trade_quarterly tq
+	LEFT JOIN trade_diversity_quarterly tdq ON tq.year = tdq.year
+		AND tq.quarter = tdq.quarter
+	)
+SELECT json_object('total_trading_partners', (
+			SELECT count(*)
+			FROM civilization_trade_analysis
+			), 'all_time_trade_value', (
+			COALESCE((
+					SELECT sum(total_trade_value)
+					FROM civilization_trade_analysis
+					), 0)
+			), 'all_time_trade_balance', (
+			COALESCE((
+					SELECT sum(trade_balance)
+					FROM civilization_trade_analysis
+					), 0)
+			), 'civilization_data', json_object('civilization_trade_data', (
+				SELECT json_arrayagg(json_object('civilization_type', cta.civilization_type, 'total_caravans', cta.total_caravans, 'total_trade_value', cta.total_trade_value, 'trade_balance', cta.trade_balance, 'trade_relationship', cta.trade_relationship, 'diplomatic_correlation', cta.diplomatic_correlation, 'caravan_ids', (
+								SELECT json_arrayagg(c.caravan_id)
+								FROM caravans c
+								WHERE c.civilization_type = cta.civilization_type
+								)))
+				FROM civilization_trade_analysis cta
+				)), 'critical_import_dependencies', json_object('resource_dependency', (
+				SELECT json_arrayagg(json_object('material_type', ids.material_type, 'dependency_score', ids.dependency_score, 'total_imported', ids.total_imported, 'import_diversity', ids.import_diversity, 'resource_ids', (
+								SELECT json_arrayagg(r.resource_id)
+								FROM resources r
+								WHERE r.type = ids.material_type
+								)))
+				FROM import_dependency_stats ids
+				)), 'export_effectiveness', json_object('export_effectiveness', (
+				SELECT json_arrayagg(json_object('workshop_type', ewg.workshop_type, 'product_type', ewg.product_type, 'export_ratio', ewg.export_ratio, 'avg_markup', ewg.avg_markup, 'workshop_ids', (
+								SELECT json_arrayagg(ews.workshop_id)
+								FROM export_effectiveness_stats ews
+								WHERE ews.workshop_type = ewg.workshop_type
+									AND ews.product_type = ewg.product_type
+								)))
+				FROM export_effectiveness_grouped ewg
+				)), 'trade_timeline', json_object('trade_growth', (
+				SELECT json_arrayagg(json_object('year', tts.year, 'quarter', tts.quarter, 'quarterly_value', tts.quarterly_value, 'quarterly_balance', tts.quarterly_balance, 'trade_diversity', tts.trade_diversity) ORDER BY tts.year, tts.quarter)
+				FROM trade_timeline_stats tts
+				)));

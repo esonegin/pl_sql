@@ -1,0 +1,447 @@
+Задача 5*: Многофакторный анализ угроз и безопасности крепости
+
+Разработайте запрос, который комплексно анализирует безопасность крепости, учитывая:
+- Историю всех атак существ и их исходов
+- Эффективность защитных сооружений
+- Соотношение между типами существ и результативностью обороны
+- Оценку уязвимых зон на основе архитектуры крепости
+- Корреляцию между сезонными факторами и частотой нападений
+- Готовность военных отрядов и их расположение
+- Эволюцию защитных способностей крепости со временем
+
+WITH
+attack_stats AS (
+    SELECT
+        COUNT(*) AS total_recorded_attacks,
+        COUNT(DISTINCT creature_id) AS unique_attackers,
+        SUM(
+            CASE
+                WHEN outcome = 'Victory' THEN 1
+                ELSE 0
+            END
+        ) AS successful_defenses,
+        SUM(casualties) AS total_casualties,
+        SUM(enemy_casualties) AS total_enemy_casualties
+    FROM CREATURE_ATTACKS
+),
+threat_stats AS (
+    SELECT
+        C.type AS creature_type,
+        MAX(C.threat_level) AS threat_level,
+        SUM(C.estimated_population) AS estimated_numbers
+    FROM CREATURES C
+    WHERE C.active = TRUE
+    GROUP BY C.type
+),
+sighting_stats AS (
+    SELECT
+        C.type AS creature_type,
+        MAX(CS.date) AS last_sighting_date
+    FROM CREATURES C
+    JOIN CREATURE_SIGHTINGS CS
+        ON C.creature_id = CS.creature_id
+    WHERE C.active = TRUE
+    GROUP BY C.type
+),
+territory_stats AS (
+    SELECT
+        C.type AS creature_type,
+        MIN(CT.distance_to_fortress) AS territory_proximity
+    FROM CREATURES C
+    JOIN CREATURE_TERRITORIES CT
+        ON C.creature_id = CT.creature_id
+    WHERE C.active = TRUE
+    GROUP BY C.type
+),
+defense_stats AS (
+    SELECT
+        defense_structures_used AS defense_type,
+        COUNT(*) AS total_attacks,
+        SUM(
+            CASE
+                WHEN outcome = 'Victory' THEN 1
+                ELSE 0
+            END
+        ) AS successful_defenses,
+        ROUND(
+            SUM(
+                CASE
+                    WHEN outcome = 'Victory' THEN 1
+                    ELSE 0
+                END
+            ) * 100.0 / NULLIF(COUNT(*), 0),
+            2
+        ) AS effectiveness_rate,
+        ROUND(AVG(enemy_casualties), 2) AS avg_enemy_casualties
+    FROM CREATURE_ATTACKS
+    GROUP BY defense_structures_used
+),
+vulnerability_stats AS (
+    SELECT
+        L.location_id,
+        L.zone_id,
+        L.name AS zone_name,
+        L.fortification_level,
+        L.wall_integrity,
+        L.trap_density,
+        L.choke_points,
+        COUNT(CA.attack_id) AS historical_attacks,
+        SUM(
+            CASE
+                WHEN CA.outcome != 'Victory' THEN 1
+                ELSE 0
+            END
+        ) AS historical_breaches,
+        ROUND(AVG(CA.military_response_time_minutes), 2)
+            AS military_response_time
+    FROM LOCATIONS L
+    LEFT JOIN CREATURE_ATTACKS CA
+        ON L.location_id = CA.location_id
+    GROUP BY
+        L.location_id,
+        L.zone_id,
+        L.name,
+        L.fortification_level,
+        L.wall_integrity,
+        L.trap_density,
+        L.choke_points
+),
+current_combat_skills AS (
+    SELECT
+        DS.dwarf_id,
+        DS.skill_id,
+        DS.level
+    FROM (
+        SELECT
+            DS.*,
+            ROW_NUMBER() OVER (
+                PARTITION BY DS.dwarf_id, DS.skill_id
+                ORDER BY DS.date DESC
+            ) AS rn
+        FROM DWARF_SKILLS DS
+        JOIN SKILLS S
+            ON DS.skill_id = S.skill_id
+        WHERE S.category = 'Combat'
+    ) DS
+    WHERE DS.rn = 1
+),
+squad_skill_stats AS (
+    SELECT
+        SM.squad_id,
+        ROUND(AVG(CCS.level), 2) AS avg_combat_skill
+    FROM SQUAD_MEMBERS SM
+    JOIN current_combat_skills CCS
+        ON SM.dwarf_id = CCS.dwarf_id
+    WHERE SM.exit_date IS NULL
+    GROUP BY SM.squad_id
+),
+squad_combat_stats AS (
+    SELECT
+        squad_id,
+        ROUND(
+            SUM(
+                CASE
+                    WHEN outcome = 'Victory' THEN 1
+                    ELSE 0
+                END
+            ) * 1.0 / NULLIF(COUNT(*), 0),
+            2
+        ) AS combat_effectiveness
+    FROM SQUAD_BATTLES
+    GROUP BY squad_id
+),
+active_member_stats AS (
+    SELECT
+        squad_id,
+        COUNT(DISTINCT dwarf_id) AS active_members
+    FROM SQUAD_MEMBERS
+    WHERE exit_date IS NULL
+    GROUP BY squad_id
+),
+squad_training_stats AS (
+    SELECT
+        squad_id,
+        ROUND(AVG(effectiveness), 2) AS avg_training_effectiveness
+    FROM SQUAD_TRAINING
+    GROUP BY squad_id
+),
+squad_equipment_stats AS (
+    SELECT
+        SE.squad_id,
+        ROUND(AVG(E.quality), 2) AS avg_equipment_quality
+    FROM SQUAD_EQUIPMENT SE
+    JOIN EQUIPMENT E
+        ON SE.equipment_id = E.equipment_id
+    GROUP BY SE.squad_id
+),
+military_readiness_stats AS (
+    SELECT
+        MS.squad_id,
+        MS.name AS squad_name,
+        COALESCE(AMS.active_members, 0) AS active_members,
+        COALESCE(SS.avg_combat_skill, 0) AS avg_combat_skill,
+        COALESCE(CS.combat_effectiveness, 0) AS combat_effectiveness,
+        COALESCE(STS.avg_training_effectiveness, 0) AS avg_training_effectiveness,
+        COALESCE(SES.avg_equipment_quality, 0) AS avg_equipment_quality
+    FROM MILITARY_SQUADS MS
+    LEFT JOIN active_member_stats AMS
+        ON MS.squad_id = AMS.squad_id
+    LEFT JOIN squad_skill_stats SS
+        ON MS.squad_id = SS.squad_id
+    LEFT JOIN squad_combat_stats CS
+        ON MS.squad_id = CS.squad_id
+    LEFT JOIN squad_training_stats STS
+        ON MS.squad_id = STS.squad_id
+    LEFT JOIN squad_equipment_stats SES
+        ON MS.squad_id = SES.squad_id
+),
+security_evolution_base AS (
+    SELECT
+        EXTRACT(YEAR FROM date)::INT AS year,
+        COUNT(*) AS total_attacks,
+        SUM(casualties) AS casualties,
+        ROUND(
+            SUM(
+                CASE
+                    WHEN outcome = 'Victory' THEN 1
+                    ELSE 0
+                END
+            ) * 100.0 / NULLIF(COUNT(*), 0),
+            2
+        ) AS defense_success_rate
+    FROM CREATURE_ATTACKS
+    GROUP BY EXTRACT(YEAR FROM date)
+),
+security_evolution AS (
+    SELECT
+        year,
+        total_attacks,
+        casualties,
+        defense_success_rate,
+        ROUND(
+            defense_success_rate
+            - LAG(defense_success_rate) OVER (
+                ORDER BY year
+            ),
+            2
+        ) AS year_over_year_improvement
+    FROM security_evolution_base
+),
+threat_overall AS (
+    SELECT
+        CASE
+            WHEN MAX(threat_level) >= 5 THEN 'Critical'
+            WHEN MAX(threat_level) >= 4 THEN 'High'
+            WHEN MAX(threat_level) >= 2 THEN 'Moderate'
+            ELSE 'Low'
+        END AS current_threat_level
+    FROM threat_stats
+),
+active_threat_stats AS (
+    SELECT
+        TS.creature_type,
+        TS.threat_level,
+        SS.last_sighting_date,
+        TR.territory_proximity,
+        TS.estimated_numbers
+    FROM threat_stats TS
+    LEFT JOIN sighting_stats SS
+        ON TS.creature_type = SS.creature_type
+    LEFT JOIN territory_stats TR
+        ON TS.creature_type = TR.creature_type
+),
+vulnerability_limits AS (
+    SELECT
+        MAX(historical_attacks) AS max_attacks,
+        MAX(historical_breaches) AS max_breaches,
+        MAX(military_response_time) AS max_response_time,
+        MAX(fortification_level) AS max_fortification,
+        MAX(wall_integrity) AS max_wall_integrity,
+        MAX(trap_density) AS max_trap_density
+    FROM vulnerability_stats
+),
+vulnerability_analysis AS (
+    SELECT
+        VS.*,
+        ROUND(
+              (VS.historical_attacks::numeric
+                  / NULLIF(VL.max_attacks, 0)) * 0.20
+            + (VS.historical_breaches::numeric
+                  / NULLIF(VL.max_breaches, 0)) * 0.25
+            + (VS.military_response_time::numeric
+                  / NULLIF(VL.max_response_time, 0)) * 0.20
+            + (1 - VS.fortification_level::numeric
+                  / NULLIF(VL.max_fortification, 0)) * 0.15
+            + (1 - VS.wall_integrity::numeric
+                  / NULLIF(VL.max_wall_integrity, 0)) * 0.10
+            + (1 - VS.trap_density::numeric
+                  / NULLIF(VL.max_trap_density, 0)) * 0.10,
+            2
+        ) AS vulnerability_score
+    FROM vulnerability_stats VS
+    CROSS JOIN vulnerability_limits VL
+),
+zone_response_stats AS (
+    SELECT
+        L.zone_id,
+        ROUND(
+            AVG(CA.military_response_time_minutes),
+            2
+        ) AS response_time
+    FROM LOCATIONS L
+    JOIN CREATURE_ATTACKS CA
+        ON L.location_id = CA.location_id
+    GROUP BY L.zone_id
+),
+seasonal_attack_stats AS (
+    SELECT
+        CASE
+            WHEN EXTRACT(MONTH FROM date) IN (12, 1, 2)
+                THEN 'Winter'
+            WHEN EXTRACT(MONTH FROM date) IN (3, 4, 5)
+                THEN 'Spring'
+            WHEN EXTRACT(MONTH FROM date) IN (6, 7, 8)
+                THEN 'Summer'
+            ELSE 'Autumn'
+        END AS season,
+        COUNT(*) AS attack_count
+    FROM CREATURE_ATTACKS
+    GROUP BY
+        CASE
+            WHEN EXTRACT(MONTH FROM date) IN (12, 1, 2)
+                THEN 'Winter'
+            WHEN EXTRACT(MONTH FROM date) IN (3, 4, 5)
+                THEN 'Spring'
+            WHEN EXTRACT(MONTH FROM date) IN (6, 7, 8)
+                THEN 'Summer'
+            ELSE 'Autumn'
+        END
+)
+
+SELECT JSON_OBJECT(
+    'total_recorded_attacks', (
+        SELECT total_recorded_attacks
+        FROM attack_stats
+    ),
+
+    'unique_attackers', (
+        SELECT unique_attackers
+        FROM attack_stats
+    ),
+
+    'overall_defense_success_rate', (
+        SELECT ROUND(
+            successful_defenses * 100.0
+            / NULLIF(total_recorded_attacks, 0),
+            2
+        )
+        FROM attack_stats
+    ),
+
+    'security_analysis',
+    JSON_OBJECT(
+
+        'threat_assessment',
+        JSON_OBJECT(
+            'current_threat_level', (
+                SELECT current_threat_level
+                FROM threat_overall
+            ),
+
+            'active_threats', (
+                SELECT JSON_ARRAYAGG(
+                    JSON_OBJECT(
+                        'creature_type', ATS.creature_type,
+                        'threat_level', ATS.threat_level,
+                        'last_sighting_date', ATS.last_sighting_date,
+                        'territory_proximity', ATS.territory_proximity,
+                        'estimated_numbers', ATS.estimated_numbers,
+
+                        'creature_ids', (
+                            SELECT JSON_ARRAYAGG(C.creature_id)
+                            FROM CREATURES C
+                            WHERE C.type = ATS.creature_type
+                              AND C.active = TRUE
+                        )
+                    )
+                )
+                FROM active_threat_stats ATS
+            )
+        ),
+
+        'vulnerability_analysis',
+        (
+            SELECT JSON_ARRAYAGG(
+                JSON_OBJECT(
+                    'zone_id', VA.zone_id,
+                    'zone_name', VA.zone_name,
+                    'vulnerability_score', VA.vulnerability_score,
+                    'historical_breaches', VA.historical_breaches,
+                    'fortification_level', VA.fortification_level,
+                    'military_response_time', VA.military_response_time,
+
+                    'defense_coverage',
+                    JSON_OBJECT(
+                        'structure_ids', NULL,
+                        'squad_ids', NULL
+                    )
+                )
+            )
+            FROM vulnerability_analysis VA
+        ),
+
+        'defense_effectiveness',
+        (
+            SELECT JSON_ARRAYAGG(
+                JSON_OBJECT(
+                    'defense_type', DS.defense_type,
+                    'effectiveness_rate', DS.effectiveness_rate,
+                    'avg_enemy_casualties', DS.avg_enemy_casualties
+                )
+            )
+            FROM defense_stats DS
+        ),
+
+        'military_readiness_assessment',
+        (
+            SELECT JSON_ARRAYAGG(
+                JSON_OBJECT(
+                    'squad_id', MRS.squad_id,
+                    'squad_name', MRS.squad_name,
+
+                    'readiness_score',
+                    ROUND(
+                          MRS.combat_effectiveness * 0.35
+                        + (MRS.avg_combat_skill / 10.0) * 0.30
+                        + MRS.avg_training_effectiveness * 0.20
+                        + (MRS.avg_equipment_quality / 5.0) * 0.15,
+                        2
+                    ),
+
+                    'active_members', MRS.active_members,
+                    'avg_combat_skill', MRS.avg_combat_skill,
+                    'combat_effectiveness', MRS.combat_effectiveness,
+
+                    'response_coverage', NULL
+                )
+            )
+            FROM military_readiness_stats MRS
+        ),
+
+        'security_evolution',
+        (
+            SELECT JSON_ARRAYAGG(
+                JSON_OBJECT(
+                    'year', SE.year,
+                    'defense_success_rate', SE.defense_success_rate,
+                    'total_attacks', SE.total_attacks,
+                    'casualties', SE.casualties,
+                    'year_over_year_improvement',
+                        SE.year_over_year_improvement
+                )
+                ORDER BY SE.year
+            )
+            FROM security_evolution SE
+        )
+    )
+);
